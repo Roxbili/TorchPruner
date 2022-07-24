@@ -5,16 +5,14 @@ import torch.nn as nn
 from torch.nn import Module
 import logging
 import numpy as np
+from torchpruner.pruner.compressor import Compressor
+from torchpruner.pruner.registry import Pruner
+
 _logger = logging.getLogger(__name__)
 
-from .compressor import Compressor
-from tools import LayerInfo
 
-
+@Pruner.register
 class LevelPruner(Compressor):
-    def __call__(self, current_config_list: Optional[List[Dict]]):
-        return self.compress(current_config_list)
-
     def prune(self, module: Module, mask, sparsity, prune_bias=False):
         mask_new = {}
         prune_name_list = ['weight', 'bias'] if prune_bias else ['weight']
@@ -35,7 +33,10 @@ class LevelPruner(Compressor):
 
         return mask_new
 
-    def compress(self, current_config_list: Optional[List[Dict]]):
+    def compress(self, current_config_list: Optional[List[Dict]] = None):
+        if current_config_list is None:
+            current_config_list = self.config_list
+
         masks = self.get_masks_from_model()
         # self.debug_mask(masks)
 

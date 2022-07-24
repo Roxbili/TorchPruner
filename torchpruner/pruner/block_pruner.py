@@ -6,15 +6,14 @@ import torch.nn as nn
 from torch.nn import Module
 import torch.nn.functional as F
 import logging
+from torchpruner.pruner.compressor import Compressor, PrunerModuleWrapper
+from torchpruner.pruner.registry import Pruner
+
 _logger = logging.getLogger(__name__)
 
-from .compressor import Compressor, PrunerModuleWrapper
-from tools import LayerInfo
 
+@Pruner.register
 class BlockPruner(Compressor):
-    def __call__(self, current_config_list: Optional[List[Dict]]):
-        return self.compress(current_config_list)
-
     def __init__(self, model: Optional[Module], config_list: Optional[List[Dict]], block_size: int):
         """
         Parameters
@@ -189,7 +188,10 @@ class BlockPruner(Compressor):
         mask_new['bias'] = mask['bias']
         return mask_new
 
-    def compress(self, current_config_list: Optional[List[Dict]]):
+    def compress(self, current_config_list: Optional[List[Dict]] = None):
+        if current_config_list is None:
+            current_config_list = self.config_list
+
         masks = self.get_masks_from_model()
         # self.debug_mask(masks)
 

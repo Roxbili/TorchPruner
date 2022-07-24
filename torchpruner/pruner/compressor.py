@@ -13,7 +13,8 @@ pd.set_option('display.width', 180)    # 设置打印宽度(**重要**)
 import logging
 _logger = logging.getLogger(__name__)
 
-from tools import get_module_by_name, LayerInfo
+from torchpruner.utils import get_module_by_name
+
 
 weighted_modules = [
     'Conv1d', 'Conv2d', 'Conv3d', 'ConvTranspose1d', 'ConvTranspose2d', 'ConvTranspose3d',
@@ -21,6 +22,13 @@ weighted_modules = [
     'PReLU',
     'Embedding', 'EmbeddingBag',
 ]
+
+
+class LayerInfo:
+    def __init__(self, name: str, module: nn.Module):
+        self.module = module
+        self.name = name
+        self.type_ = type(module).__name__
 
 
 def _setattr(model: Module, name: str, module: Module):
