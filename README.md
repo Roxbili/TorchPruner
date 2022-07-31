@@ -39,6 +39,7 @@ pruner = {
 
 pruner.compress()
 pruner.show_sparsity()
+pruner.parameters_size()
 ```
 
 ### agp iteration
@@ -54,6 +55,7 @@ scheduler = AGPScheduler(pruner, config_list, finetuner, evaluator,
 scheduler.compress()
 
 pruner.show_sparsity()
+pruner.parameters_size()
 ```
 
 `fintuner` gets `epoch` and `model` as inputs, `evaluator` gets `model` as inputs.
@@ -65,3 +67,4 @@ pruner.show_sparsity()
 - LevelPruner: magnitede pruning
 - BlockPruner: block pruning, along in_channel axis
 2. Support one-shot pruning and AGP iteration pruning
+3. Support evaluating parameters size of sparse model, including quant size, sparse encoding size and parameters size.
