@@ -37,9 +37,10 @@ class BlockPruner(Compressor):
             block_size = (1, self.block_size)   # in_feature方向上
         elif module_name == 'Conv2d':
             # conv在in_channel方向上
-            # depthwise conv在out_channel方向上
+            # depthwise conv在kernel_w方向上
             if module.groups == module.weight.shape[0]:    # depthwise
-                block_size = (self.block_size, 1, 1, 1)
+                # block_size = (self.block_size, 1, 1, 1)
+                block_size = (1, 1, 1, 3)   # for 3x3 dw kernel
             elif module.groups == 1:    # 普通conv
                 block_size = (1, self.block_size, 1, 1)
             else:
@@ -213,7 +214,11 @@ class BlockPruner(Compressor):
 
         qparams_flash_memory = self._qparams_flash_memory(weight, quantize_type)
         # (1 + 1 / self.block_size) 是考虑块内接下来的元素都是非零，因此列号只需要block首地址，剩下的当作是block_size连续
-        params_flash_memory = (1 + 1 / self.block_size) * int(weight.numel() * (1 - sparsity))
+        if isinstance(module, nn.Conv2d) and module.groups == module.weight.shape[0]:
+            params_flash_memory = (1 + 1 / 3) * int(weight.numel() * (1 - sparsity))
+        else:
+            params_flash_memory = (1 + 1 / self.block_size) * int(weight.numel() * (1 - sparsity))
+        params_flash_memory = int(params_flash_memory)
         
         # bias默认不剪枝，因此注释
         # if bias is not None:

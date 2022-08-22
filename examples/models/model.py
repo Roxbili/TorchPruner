@@ -45,6 +45,28 @@ class ModelBN(nn.Module):
         return x
 
 
+class ModelDW(nn.Module):
+    def __init__(self):
+        super(ModelDW, self).__init__()
+        self.block = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=3, stride=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(32, 32, kernel_size=3, stride=1, groups=32, bias=False),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.MaxPool2d(2)
+        )
+        self.fc = nn.Linear(5 * 5 * 32, 10)
+
+    def forward(self, x):
+        x = self.block(x)
+        x = x.view(-1, 5 * 5 * 32)
+        x = self.fc(x)
+        return x
+
+
 class ModelBNNoReLU(nn.Module):
     def __init__(self):
         super(ModelBNNoReLU, self).__init__()

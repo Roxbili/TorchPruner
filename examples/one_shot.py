@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torchvision import datasets, transforms
 from models.model import (
-    Model, ModelBN, ModelLinear, ModelShortCut, ModelBNNoReLU, ModelLayerNorm, 
+    Model, ModelBN, ModelDW, ModelLinear, ModelShortCut, ModelBNNoReLU, ModelLayerNorm, 
 )
 from torchpruner.utils import random_seed
 from torchpruner.pruner import LevelPruner, RandomPruner, BlockPruner
@@ -135,7 +135,8 @@ if __name__ == "__main__":
 
     # choose model
     # model = Model()
-    model = ModelBN()
+    # model = ModelBN()
+    model = ModelDW()
     # model = ModelBNNoReLU()
     # model = ModelLinear()
     # model = ModelShortCut()
@@ -156,6 +157,8 @@ if __name__ == "__main__":
     for epoch in range(1, finetune_epochs + 1):
         train_one_epoch(model, device, train_loader, optimizer, epoch)
         validate(model, device, test_loader)
+    param_size = pruner.parameters_size()
+    print(f"Parameters size {param_size / 1024} KB")
 
     print("After finetuning sparsity:")
     pruner.show_sparsity()

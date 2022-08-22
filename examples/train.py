@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torchvision import datasets, transforms
 from models.model import (
-    Model, ModelBN, ModelLinear, ModelShortCut, ModelBNNoReLU, ModelLayerNorm, 
+    Model, ModelBN, ModelDW, ModelLinear, ModelShortCut, ModelBNNoReLU, ModelLayerNorm, 
 )
 from torchpruner.utils import random_seed
 
@@ -93,7 +93,8 @@ if __name__ == "__main__":
 
     # choose model
     # model = Model()
-    model = ModelBN()
+    # model = ModelBN()
+    model = ModelDW()
     # model = ModelBNNoReLU()
     # model = ModelLinear()
     # model = ModelShortCut()
