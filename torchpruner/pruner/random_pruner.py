@@ -48,18 +48,19 @@ class RandomPruner(Compressor):
         self.load_masks_to_model(masks_new)
         return self.bound_model
 
-    def _flash_memory_8bit_offset(self, sparsity, module: nn.Module):
+    def _flash_memory_8bit_offset(self, sparsity, module: nn.Module, part_params_size: dict):
         weight = module.weight
         bias = module.bias
-        quantize_type = self._get_quantize_type(type(module).__name__)
-
-        qparams_flash_memory = self._qparams_flash_memory(weight, quantize_type)
-        params_flash_memory = 2 * int(weight.numel() * (1 - sparsity))
+        weight_size = int(weight.numel() * (1 - sparsity))
+        sparse_encode_size = int(weight.numel() * (1 - sparsity))
+        params_flash_memory = weight_size + sparse_encode_size
+        part_params_size['weight_size'] = weight_size
+        part_params_size['sparse_encode_size'] = sparse_encode_size
 
         # bias默认不剪枝，因此注释
         # if bias is not None:
         #     params_flash_memory += (4 + 1) * int(bias.numel() * (1 - sparsity))     # bias has 32 bit = 4 bytes, 1 for index
-        return qparams_flash_memory + params_flash_memory
+        return params_flash_memory
 
     def _cal_multi_bit_offset_memory(self, tensor):
         """
@@ -80,7 +81,7 @@ class RandomPruner(Compressor):
                 raise ValueError(f'Invalid offset: {offset}')
         return memory
 
-    def _flash_memory_multi_bit_offset(self, sparsity, module: nn.Module):
+    def _flash_memory_multi_bit_offset(self, sparsity, module: nn.Module, part_params_size: dict):
         weight = module.weight
         bias = module.bias
         quantize_type = self._get_quantize_type(type(module).__name__)

@@ -305,16 +305,15 @@ class Compressor:
             raise ValueError(f'Unsupported quantize type {quantize_type}, expected per_channel or per_tensor')
         return weight_flash_memory + input_output_flash_memory
 
-    def _flash_memory_8bit_offset(self, sparsity, module: nn.Module):
+    def _flash_memory_8bit_offset(self, sparsity, module: nn.Module, part_params_size: dict):
         """
         evaluate flash memory for tiny device
 
         Args
         -------
         sparsity: the sparsity of the module to the weight
-        weight: the weight of the module
-        bias: the bias of the module
-        quantize_type: 'per_channel' or 'per_tensor', the flash memory will take quantization parameters size into account
+        module: nn.Module to be counted
+        part_params_size: a dict to save the parameters size for each part
 
         return
         -------
@@ -322,7 +321,7 @@ class Compressor:
         """
         raise NotImplementedError('_flash_memory_8bit_offset should be implemented.') 
     
-    def _flash_memory_multi_bit_offset(self, sparsity, module: nn.Module):
+    def _flash_memory_multi_bit_offset(self, sparsity, module: nn.Module, part_params_size: dict):
         raise NotImplementedError('_flash_memory_multi_bit_offset should be implemented.') 
 
     def _weight_to_1d(self, weight: torch.Tensor, module_type: str):
@@ -370,33 +369,65 @@ class Compressor:
             1: self._flash_memory_multi_bit_offset
         }[sparse_format]
 
+        self.layer_parameters_size = {}
         params_size = 0
         skip_layer_name = None
         for name, module in self.bound_model.named_modules():
             layer = LayerInfo(name, module)
+            part_params_size = {'quant_param_size': 0, 'sparse_encode_size': 0, 'weight_size': 0, 'bias_size': 0}
 
-            if layer.name == skip_layer_name:
+            if layer.name == skip_layer_name:   # 跳过被PruneModuleWrapper封装过且已经统计过的层
                 continue
-
             elif layer.type_ == 'PrunerModuleWrapper':  # sparse layer
                 if not eval_for_tiny:
                     params_size += int((1 - module.config['sparsity']) * module.module.weight.numel())  # 剪枝后非零元素个数，也是量化后的字节数
                 else:
-                    params_size += _flash_memory(module.config['sparsity'], module.module)
+                    # quant size
+                    quantize_type = self._get_quantize_type(type(module.module).__name__)
+                    qparams_flash_memory = self._qparams_flash_memory(module.module.weight, quantize_type)
+                    part_params_size['quant_param_size'] = qparams_flash_memory
+                    params_size += qparams_flash_memory
+                    # sparse size
+                    params_size += _flash_memory(module.config['sparsity'], module.module, part_params_size)
 
                 # 这里默认bias未剪枝
                 if hasattr(module.module, 'bias') and module.module.bias is not None:
                     params_size += 4 * module.module.bias.numel()    # bias has 32 bit = 4 bytes
+                    part_params_size['bias_size'] = 4 * module.module.bias.numel()
+                self.layer_parameters_size.update({name: part_params_size})
 
                 # PrunerModuleWrapper下一层封装已经统计过了，这里记录名字，之后跳过
                 skip_layer_name = layer.name + '.module'
 
             elif layer.type_ == 'Linear' or layer.type_ == 'Conv2d' or layer.type_ == 'LayerNorm':    # 说明未剪枝的Linear或者Conv2d层
+                # quant size
+                quantize_type = self._get_quantize_type(type(module).__name__)
+                qparams_flash_memory = self._qparams_flash_memory(module.weight, quantize_type)
+                part_params_size['quant_param_size'] = qparams_flash_memory
+                params_size += qparams_flash_memory
+                # weight and bias size
                 params_size += module.weight.numel()
+                part_params_size['weight_size'] = module.weight.numel()
                 if hasattr(module, 'bias') and module.bias is not None:
                     params_size += 4 * module.bias.numel()
-
+                    part_params_size['bias_size'] = 4 * module.bias.numel()
+                self.layer_parameters_size.update({name: part_params_size})
         return params_size
+    
+    def get_layer_parameters_size(self) -> dict:
+        """Return parameters size of each layer
+
+            {
+                'layer_name': {
+                    'quant_param_size' : size1,
+                    'sparse_encode_size': size2,
+                    'weight_size': size3    # sparse or dense
+                }
+            }
+        """
+        assert len(self.layer_parameters_size != 0), \
+            "parameters_size should be implemented before calling this function"
+        return self.layer_parameters_size
 
     def debug_mask(self, masks):
         """
