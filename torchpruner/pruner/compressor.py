@@ -372,13 +372,17 @@ class Compressor:
         self.layer_parameters_size = {}
         params_size = 0
         skip_layer_name = None
-        for name, module in self.bound_model.named_modules():
+        module_list = list(self.bound_model.named_modules())
+        for idx, (name, module) in enumerate(module_list):
             layer = LayerInfo(name, module)
             part_params_size = {'quant_param_size': 0, 'sparse_encode_size': 0, 'weight_size': 0, 'bias_size': 0}
 
             if layer.name == skip_layer_name:   # 跳过被PruneModuleWrapper封装过且已经统计过的层
                 continue
             elif layer.type_ == 'PrunerModuleWrapper':  # sparse layer
+                # PrunerModuleWrapper下一层封装已经统计过了，这里记录名字，之后跳过
+                skip_layer_name = layer.name + '.module'
+
                 if not eval_for_tiny:
                     params_size += int((1 - module.config['sparsity']) * module.module.weight.numel())  # 剪枝后非零元素个数，也是量化后的字节数
                 else:
@@ -389,15 +393,22 @@ class Compressor:
                     params_size += qparams_flash_memory
                     # sparse size
                     params_size += _flash_memory(module.config['sparsity'], module.module, part_params_size)
-
                 # 这里默认bias未剪枝
                 if hasattr(module.module, 'bias') and module.module.bias is not None:
                     params_size += 4 * module.module.bias.numel()    # bias has 32 bit = 4 bytes
                     part_params_size['bias_size'] = 4 * module.module.bias.numel()
+                elif type(module.module).__name__ == 'Conv2d':   # bias False, 检查是否下面有BN层，算子融合后的整个算子是有bias的
+                    for new_name, new_module in module_list[idx + 1:]:
+                        new_layer = LayerInfo(new_name, new_module)
+                        if new_layer.name == skip_layer_name:
+                            continue
+                        if new_layer.type_ == 'BatchNorm2d':
+                            params_size += 4 * module.module.out_channels
+                            part_params_size['bias_size'] = 4 * module.module.out_channels
+                        elif new_layer.type_ in ['Conv2d', 'Linear', 'LayerNorm']:
+                            break
                 self.layer_parameters_size.update({name: part_params_size})
 
-                # PrunerModuleWrapper下一层封装已经统计过了，这里记录名字，之后跳过
-                skip_layer_name = layer.name + '.module'
 
             elif layer.type_ == 'Linear' or layer.type_ == 'Conv2d' or layer.type_ == 'LayerNorm':    # 说明未剪枝的Linear或者Conv2d层
                 # quant size
@@ -425,7 +436,7 @@ class Compressor:
                 }
             }
         """
-        assert len(self.layer_parameters_size != 0), \
+        assert len(self.layer_parameters_size) != 0, \
             "parameters_size should be implemented before calling this function"
         return self.layer_parameters_size
 
