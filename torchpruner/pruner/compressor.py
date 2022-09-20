@@ -384,18 +384,16 @@ class Compressor:
                 skip_layer_name = layer.name + '.module'
 
                 if not eval_for_tiny:
-                    params_size += int((1 - module.config['sparsity']) * module.module.weight.numel())  # 剪枝后非零元素个数，也是量化后的字节数
+                    part_params_size['weight_size'] = int((1 - module.config['sparsity']) * module.module.weight.numel())  # 剪枝后非零元素个数，也是量化后的字节数
                 else:
                     # quant size
                     quantize_type = self._get_quantize_type(type(module.module).__name__)
                     qparams_flash_memory = self._qparams_flash_memory(module.module.weight, quantize_type)
                     part_params_size['quant_param_size'] = qparams_flash_memory
-                    params_size += qparams_flash_memory
-                    # sparse size
-                    params_size += _flash_memory(module.config['sparsity'], module.module, part_params_size)
+                    # sparse_encode_size & weight_size
+                    _flash_memory(module.config['sparsity'], module.module, part_params_size)
                 # 这里默认bias未剪枝
                 if hasattr(module.module, 'bias') and module.module.bias is not None:
-                    params_size += 4 * module.module.bias.numel()    # bias has 32 bit = 4 bytes
                     part_params_size['bias_size'] = 4 * module.module.bias.numel()
                 elif type(module.module).__name__ == 'Conv2d':   # bias False, 检查是否下面有BN层，算子融合后的整个算子是有bias的
                     for new_name, new_module in module_list[idx + 1:]:
@@ -403,26 +401,35 @@ class Compressor:
                         if new_layer.name == skip_layer_name:
                             continue
                         if new_layer.type_ == 'BatchNorm2d':
-                            params_size += 4 * module.module.out_channels
                             part_params_size['bias_size'] = 4 * module.module.out_channels
                         elif new_layer.type_ in ['Conv2d', 'Linear', 'LayerNorm']:
                             break
+                sparse_size = part_params_size['weight_size'] + part_params_size['sparse_encode_size']
+                if sparse_size > module.module.weight.numel():  # 稀疏后的大小大于dense，那么就不稀疏
+                    part_params_size['sparse_encode_size'] = 0
+                    part_params_size['weight_size'] = module.module.weight.numel()  # 按照dense推理
                 self.layer_parameters_size.update({name: part_params_size})
-
 
             elif layer.type_ == 'Linear' or layer.type_ == 'Conv2d' or layer.type_ == 'LayerNorm':    # 说明未剪枝的Linear或者Conv2d层
                 # quant size
                 quantize_type = self._get_quantize_type(type(module).__name__)
                 qparams_flash_memory = self._qparams_flash_memory(module.weight, quantize_type)
                 part_params_size['quant_param_size'] = qparams_flash_memory
-                params_size += qparams_flash_memory
                 # weight and bias size
-                params_size += module.weight.numel()
                 part_params_size['weight_size'] = module.weight.numel()
                 if hasattr(module, 'bias') and module.bias is not None:
-                    params_size += 4 * module.bias.numel()
                     part_params_size['bias_size'] = 4 * module.bias.numel()
+                elif type(module).__name__ == 'Conv2d':   # bias False, 检查是否下面有BN层，算子融合后的整个算子是有bias的
+                    for new_name, new_module in module_list[idx + 1:]:
+                        new_layer = LayerInfo(new_name, new_module)
+                        if new_layer.name == skip_layer_name:
+                            continue
+                        if new_layer.type_ == 'BatchNorm2d':
+                            part_params_size['bias_size'] = 4 * module.out_channels
+                        elif new_layer.type_ in ['Conv2d', 'Linear', 'LayerNorm']:
+                            break
                 self.layer_parameters_size.update({name: part_params_size})
+        params_size = sum([sum(part_params_size.values()) for part_params_size in self.layer_parameters_size.values()])
         return params_size
     
     def get_layer_parameters_size(self) -> dict:
