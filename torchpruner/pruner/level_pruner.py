@@ -51,9 +51,10 @@ class LevelPruner(Compressor):
         self.load_masks_to_model(masks_new)
         return self.bound_model
 
-    def _flash_memory_8bit_offset(self, sparsity, module: nn.Module, part_params_size: dict):
+    def _flash_memory_8bit_offset(self, config, module: nn.Module, part_params_size: dict):
         weight = module.weight
         bias = module.bias
+        sparsity = config['sparsity']
         weight_size = int(weight.numel() * (1 - sparsity))
         sparse_encode_size = int(weight.numel() * (1 - sparsity))
         params_flash_memory = weight_size + sparse_encode_size
@@ -84,9 +85,10 @@ class LevelPruner(Compressor):
                 raise ValueError(f'Invalid offset: {offset}')
         return memory
 
-    def _flash_memory_multi_bit_offset(self, sparsity, module: nn.Module, part_params_size: dict):
+    def _flash_memory_multi_bit_offset(self, config, module: nn.Module, part_params_size: dict):
         weight = module.weight
         bias = module.bias
+        sparsity = config['sparsity']
         quantize_type = self._get_quantize_type(type(module).__name__)
 
         qparams_flash_memory = self._qparams_flash_memory(weight, quantize_type)

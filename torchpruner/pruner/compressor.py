@@ -391,7 +391,7 @@ class Compressor:
                     qparams_flash_memory = self._qparams_flash_memory(module.module.weight, quantize_type)
                     part_params_size['quant_param_size'] = qparams_flash_memory
                     # sparse_encode_size & weight_size
-                    _flash_memory(module.config['sparsity'], module.module, part_params_size)
+                    _flash_memory(module.config, module.module, part_params_size)
                 # 这里默认bias未剪枝
                 if hasattr(module.module, 'bias') and module.module.bias is not None:
                     part_params_size['bias_size'] = 4 * module.module.bias.numel()

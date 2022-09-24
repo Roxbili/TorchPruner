@@ -18,7 +18,7 @@ def _args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset-dir', metavar='DIR', default='/tmp',
                     help='path to dataset')
-    parser.add_argument('--pruner', default='level',
+    parser.add_argument('--pruner', default='block',
                     help="'random' or 'level' or 'block'")
     parser.add_argument('--agp-iteration', type=int, default=3, help='AGP pruner iteration, must > 1 (the sparsity of first iteration is 0.)')
     parser.add_argument('--agp-finetune-epoch', type=int, default=1, help='AGP finetune epochs after pruning.)')
@@ -78,7 +78,7 @@ def prune(args, model, config_list, finetuner, evaluator, lr_scheduler=None):
     elif args.pruner == 'level':
         pruner = LevelPruner(model, config_list)
     elif args.pruner == 'block':
-        pruner = BlockPruner(model, config_list, block_size=2)
+        pruner = BlockPruner(model, config_list)
     else:
         raise Exception("Unsupport pruner {}".format(args.pruner))
 
@@ -96,12 +96,14 @@ if __name__ == "__main__":
 
     config_list = [
         {
-            'sparsity': 0.25,
-            'op_types': ['Conv2d'],
-            'op_names': ['block.0']
-        }, {
             'sparsity': 0.5,
             'op_types': ['Linear', 'Conv2d'],
+            'block_size': 4
+        }, {
+            'sparsity': 0.25,
+            'op_types': ['Conv2d'],
+            'op_names': ['block.0'],
+            'block_size': 2
         }, {
             'exclude': True,
             'op_names': ['fc']

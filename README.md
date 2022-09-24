@@ -11,12 +11,14 @@ Demo can be found in [examples](./examples/)
 ```python
 config_list = [
     {
-        'sparsity': 0.25,
-        'op_types': ['Conv2d'],
-        'op_names': ['block.0']
-    }, {
         'sparsity': 0.5,
         'op_types': ['Linear', 'Conv2d'],
+        'block_size': 4 # for block prune
+    }, {
+        'sparsity': 0.25,
+        'op_types': ['Conv2d'],
+        'op_names': ['block.0'],
+        'block_size': 2
     }, {
         'exclude': True,
         'op_names': ['fc']
@@ -28,14 +30,17 @@ config_list = [
 - op_types : Operation types to be pruned.
 - op_names : Operation names to be pruned.
 - exclude : Set True then the layers setting by op_types and op_names will be excluded from pruning.
+- block_size: For block prune, set block_size along `in_ch` dimension
+
+(Note that if a layer is satisfied with multi-config in `config_list`, later one will cover before.)
 
 ### one-shot
 ```python
 pruner = {
     'random': RandomPruner(model, config_list),
     'level': LevelPruner(model, config_list),
-    'block': BlockPruner(model, config_list, block_size=2)
-}['level']
+    'block': BlockPruner(model, config_list)
+}['block']
 
 pruner.compress()
 pruner.show_sparsity()
@@ -47,8 +52,8 @@ pruner.parameters_size()
 pruner = {
     'random': RandomPruner(model, config_list),
     'level': LevelPruner(model, config_list),
-    'block': BlockPruner(model, config_list, block_size=2)
-}['level']
+    'block': BlockPruner(model, config_list)
+}['block']
 
 scheduler = AGPScheduler(pruner, config_list, finetuner, evaluator, 
                          total_iteration=args.agp_iteration, finetune_epoch=args.agp_finetune_epoch, lr_scheduler=None)

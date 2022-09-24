@@ -1,6 +1,7 @@
 from typing import List, Dict, Optional, Tuple, Any
 import math
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from torch.nn import Module
@@ -14,7 +15,7 @@ _logger = logging.getLogger(__name__)
 
 @Pruner.register
 class BlockPruner(Compressor):
-    def __init__(self, model: Optional[Module], config_list: Optional[List[Dict]], block_size: int):
+    def __init__(self, model: Optional[Module], config_list: Optional[List[Dict]]):
         """
         Parameters
         ----------
@@ -25,16 +26,15 @@ class BlockPruner(Compressor):
         block_size
             The block window, Linear: input_feature direction, Conv: channel direction
         """
-        self.block_size = block_size
         super().__init__(model, config_list)
     
-    def _generate_block_size(self, module: Module) -> Tuple:
+    def _generate_block_size(self, module: Module, block_size) -> Tuple:
         """
-        根据Module类型生成block_size
+        根据Module类型和block_size生成新的block_size
         """
         module_name = module._get_name()
         if module_name == 'Linear':
-            block_size = (1, self.block_size)   # in_feature方向上
+            block_size = (1, block_size)   # in_feature方向上
         elif module_name == 'Conv2d':
             # conv在in_channel方向上
             # depthwise conv在kernel_w方向上
@@ -42,7 +42,7 @@ class BlockPruner(Compressor):
                 # block_size = (self.block_size, 1, 1, 1)
                 block_size = (1, 1, 1, 3)   # for 3x3 dw kernel
             elif module.groups == 1:    # 普通conv
-                block_size = (1, self.block_size, 1, 1)
+                block_size = (1, block_size, 1, 1)
             else:
                 raise ValueError('Unsupported group convolution')
         else:
@@ -159,14 +159,14 @@ class BlockPruner(Compressor):
         assert mask.shape == target_shape, f'mask shape: {mask.shape}, target shape: {target_shape}'
         return mask.to(mask.device)
 
-    def prune(self, wrapper: PrunerModuleWrapper, mask: Dict[str, torch.Tensor], sparsity):
+    def prune(self, wrapper: PrunerModuleWrapper, mask: Dict[str, torch.Tensor], sparsity, block_size: int):
         if sparsity == 0:   # 不需要进行剪枝
             return mask
 
         module = wrapper.module
         mask_new = {}
         # 根据module获得block_size
-        block_size = self._generate_block_size(module)
+        block_size = self._generate_block_size(module, block_size)
 
         # 获得metric作为评估
         metric = self._get_metric(wrapper, block_size)   # 获得本轮metric
@@ -198,18 +198,21 @@ class BlockPruner(Compressor):
 
         masks_new = {}
         for name, wrapper in self.get_modules_wrapper().items():
-            config = self._select_config(current_config_list, wrapper)
+            config = wrapper.config
             if config is not None:
                 sparsity = config['sparsity']
-                mask = self.prune(wrapper, masks[name], sparsity)
+                block_size = config['block_size']
+                mask = self.prune(wrapper, masks[name], sparsity, block_size)
                 masks_new[name] = mask
 
         self.load_masks_to_model(masks_new)
         return self.bound_model
 
-    def _flash_memory_8bit_offset(self, sparsity, module: nn.Module, part_params_size: dict):
+    def _flash_memory_8bit_offset(self, config, module: nn.Module, part_params_size: dict):
         weight = module.weight
         bias = module.bias
+        sparsity = config['sparsity']
+        block_size = config['block_size']
         # (1 + 1 / self.block_size) 是考虑块内接下来的元素都是非零，因此列号只需要block首地址，剩下的当作是block_size连续
         if isinstance(module, nn.Conv2d) and module.groups == module.weight.shape[0]:
             weight_size = int(weight.numel() * (1 - sparsity))
@@ -217,7 +220,7 @@ class BlockPruner(Compressor):
             params_flash_memory = weight_size + sparse_encode_size
         else:
             weight_size = int(weight.numel() * (1 - sparsity))
-            sparse_encode_size = int(1 / self.block_size * int(weight.numel() * (1 - sparsity)))
+            sparse_encode_size = int(1 / block_size * int(weight.numel() * (1 - sparsity)))
             params_flash_memory = weight_size + sparse_encode_size
         part_params_size['weight_size'] = weight_size
         part_params_size['sparse_encode_size'] = sparse_encode_size
@@ -227,11 +230,11 @@ class BlockPruner(Compressor):
         #     params_flash_memory += (4 + 1 / self.block_size) * int(bias.numel() * (1 - sparsity))     # bias has 32 bit = 4 bytes, 1 / self.block_size for index
         return params_flash_memory
 
-    def _cal_multi_bit_offset_memory(self, tensor):
+    def _cal_multi_bit_offset_memory(self, tensor, block_size):
         """
         calculate offset size(byte)
         """
-        non_zero_offset = self._nonzero_offset_1d(tensor)[::self.block_size]
+        non_zero_offset = self._nonzero_offset_1d(tensor)[::block_size]
         memory = 0
         for offset in non_zero_offset:
             if offset < 2**2:
@@ -246,13 +249,47 @@ class BlockPruner(Compressor):
                 raise ValueError(f'Invalid offset: {offset}')
         return memory
 
-    def _flash_memory_multi_bit_offset(self, sparsity, module: nn.Module, part_params_size: dict):
+    def _flash_memory_multi_bit_offset(self, config, module: nn.Module, part_params_size: dict):
         weight = module.weight
         bias = module.bias
+        sparsity = config['sparsity']
+        block_size = config['block_size']
         quantize_type = self._get_quantize_type(type(module).__name__)
 
         qparams_flash_memory = self._qparams_flash_memory(weight, quantize_type)
-        params_flash_memory = (1 + 0.25 / self.block_size) * int(weight.numel() * (1 - sparsity)) # weight + type
-        offset_memory = self._cal_multi_bit_offset_memory(self._weight_to_1d(weight, type(module).__name__))
+        params_flash_memory = (1 + 0.25 / block_size) * int(weight.numel() * (1 - sparsity)) # weight + type
+        offset_memory = self._cal_multi_bit_offset_memory(self._weight_to_1d(weight, type(module).__name__), block_size)
         params_flash_memory += offset_memory / 8 # bit -> byte
         return math.ceil(qparams_flash_memory + params_flash_memory)
+
+    def get_block_size_from_model(self):
+        block_size = {}
+        wrapper = self.get_modules_wrapper()
+        for name, module in wrapper.items():
+            block_size[name] = module.config['block_size']
+        return block_size
+
+    def show_sparsity(self):
+        """
+        Show sparsity of the model, layer sparsity, total sparsity
+
+        masks
+            The masks dict with format {'op_name': {'weight': mask, 'bias': mask}}.
+        """
+        def calc_sparsity(t: torch.Tensor):
+            return (1 - t.count_nonzero() / t.numel()).item()
+
+        masks = self.get_masks_from_model()
+        block_size = self.get_block_size_from_model()
+        res = []    # [[name, weight_sparsity, bias_sparsity]]
+        for name, value in masks.items():
+            weight_sparsity = calc_sparsity(value['weight'])
+            bias_sparsity = calc_sparsity(value['bias']) if value['bias'] != None else None
+            res.append([name, value['weight'].shape, weight_sparsity, None if value['bias'] is None else value['bias'].shape, bias_sparsity, block_size[name]])
+        
+        df = pd.DataFrame(res, columns=['op_name', 'weight_shape', 'weight_sparsity', 'bias_shape', 'bias_sparsity', 'block_size'])
+        _logger.info(df)
+
+        total_weight_sparsity = df['weight_sparsity'].mean()
+        total_bias_sparsity = df['bias_sparsity'].mean()
+        _logger.info(f'total weight sparsity: {total_weight_sparsity}, total bias sparsity: {total_bias_sparsity}')
