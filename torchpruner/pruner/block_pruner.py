@@ -290,6 +290,5 @@ class BlockPruner(Compressor):
         df = pd.DataFrame(res, columns=['op_name', 'weight_shape', 'weight_sparsity', 'bias_shape', 'bias_sparsity', 'block_size'])
         _logger.info(df)
 
-        total_weight_sparsity = df['weight_sparsity'].mean()
-        total_bias_sparsity = df['bias_sparsity'].mean()
+        total_weight_sparsity, total_bias_sparsity = self.get_avg_sparsity()
         _logger.info(f'total weight sparsity: {total_weight_sparsity}, total bias sparsity: {total_bias_sparsity}')

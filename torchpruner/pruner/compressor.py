@@ -243,6 +243,24 @@ class Compressor:
         """
         return self.bound_model
 
+    def get_avg_sparsity(self):
+        # calculate weight sparsity
+        weight_nonzero = 0
+        weight_total = 0
+        bias_nonzero = 0
+        bias_total = 0
+        for name, module in self.bound_model.named_modules():
+            if isinstance(module, (nn.Conv2d, nn.Linear, nn.LayerNorm)):
+                if hasattr(module, 'weight') and module.weight is not None:
+                    weight_nonzero += module.weight.count_nonzero()
+                    weight_total += module.weight.numel()
+                if hasattr(module, 'bias') and module.bias is not None:
+                    bias_nonzero += module.bias.count_nonzero()
+                    bias_total += module.bias.numel()
+        total_weight_sparsity = 1 - weight_nonzero / weight_total
+        total_bias_sparsity = 1 - bias_nonzero / bias_total
+        return total_weight_sparsity, total_bias_sparsity
+
     def show_sparsity(self):
         """
         Show sparsity of the model, layer sparsity, total sparsity
@@ -263,8 +281,7 @@ class Compressor:
         df = pd.DataFrame(res, columns=['op_name', 'weight_shape', 'weight_sparsity', 'bias_shape', 'bias_sparsity'])
         _logger.info(df)
 
-        total_weight_sparsity = df['weight_sparsity'].mean()
-        total_bias_sparsity = df['bias_sparsity'].mean()
+        total_weight_sparsity, total_bias_sparsity = self.get_avg_sparsity()
         _logger.info(f'total weight sparsity: {total_weight_sparsity}, total bias sparsity: {total_bias_sparsity}')
 
     def _get_quantize_type(self, module_type):
