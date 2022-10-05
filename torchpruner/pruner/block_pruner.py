@@ -198,7 +198,7 @@ class BlockPruner(Compressor):
 
         masks_new = {}
         for name, wrapper in self.get_modules_wrapper().items():
-            config = wrapper.config
+            config = self._select_config(current_config_list, wrapper)
             if config is not None:
                 sparsity = config['sparsity']
                 block_size = config['block_size']
